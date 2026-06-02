@@ -172,8 +172,6 @@ export const processQueue = async (): Promise<void> => {
       .eq('id', item.id);
 
     try {
-      const ownerId = item.playlists?.owner_id as string;
-
       if (item.platform === 'spotify' && item.songs?.spotify_track_id) {
         // TODO: obtener o crear playlist espejo en Spotify y agregar track
         logger.info(`[Sync] Spotify ← song ${item.song_id}`);
