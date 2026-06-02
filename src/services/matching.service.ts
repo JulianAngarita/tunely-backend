@@ -1,4 +1,4 @@
-import { TrackCandidate, MatchResult, Song } from '../types';
+import { SongCandidate, MatchResult, Song } from '../types';
 
 const WEIGHTS = { title: 0.40, artist: 0.30, album: 0.10, duration: 0.10, popularity: 0.10 } as const;
 export const AUTO_MATCH_THRESHOLD = 70;
@@ -31,7 +31,7 @@ const durationSimilarity = (msA?: number, msB?: number): number => {
   return 0;
 };
 
-export const scoreCandidate = (source: Pick<Song, 'title' | 'artist' | 'album' | 'duration_ms'>, candidate: TrackCandidate): number => {
+export const scoreCandidate = (source: Pick<Song, 'title' | 'artist' | 'album' | 'duration_ms'>, candidate: SongCandidate): number => {
   const total =
     stringSimilarity(source.title, candidate.title)       * WEIGHTS.title +
     stringSimilarity(source.artist, candidate.artist)     * WEIGHTS.artist +
@@ -44,7 +44,7 @@ export const scoreCandidate = (source: Pick<Song, 'title' | 'artist' | 'album' |
 
 export const rankCandidates = (
   source: Pick<Song, 'title' | 'artist' | 'album' | 'duration_ms'>,
-  candidates: TrackCandidate[]
+  candidates: SongCandidate[]
 ): MatchResult => {
   const ranked = candidates
     .map((c) => ({ ...c, score: scoreCandidate(source, c) }))

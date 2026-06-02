@@ -1,8 +1,8 @@
 import axios from 'axios';
 import supabase from '../config/supabase';
-import env from '../config/env';
+import {env} from '../config/env';
 import { encrypt, decrypt } from '../utils/crypto';
-import { TrackCandidate } from '../types';
+import { SongCandidate } from '../types';
 import logger from '../utils/logger';
 
 interface SpotifyTokenResponse {
@@ -50,7 +50,7 @@ export const getValidToken = async (userId: string): Promise<string> => {
   return access_token;
 };
 
-export const searchTracks = async (userId: string, query: string, limit = 5): Promise<TrackCandidate[]> => {
+export const searchTracks = async (userId: string, query: string, limit = 5): Promise<SongCandidate[]> => {
   const token = await getValidToken(userId);
   const res = await axios.get<{ tracks: { items: SpotifyTrack[] } }>(
     'https://api.spotify.com/v1/search',

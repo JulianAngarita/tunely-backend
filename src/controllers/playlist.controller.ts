@@ -1,21 +1,20 @@
 import { Response, NextFunction } from 'express';
 import * as playlistService from '../services/playlist.service';
 import { ok, created, notFound } from '../utils/response';
-import { AuthRequest } from '../types';
+import { AuthRequest, CreatePlaylistPayload, MemberRole } from '../types';
 
 export const create = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const playlist = await playlistService.create({
-      ...req.body as object,
+      ...(req.body as CreatePlaylistPayload),
       ownerId: req.user!.id,
     });
     created(res, { playlist });
   } catch (err) { next(err); }
 };
-
 export const getOne = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const playlist = await playlistService.getById(req.params.id, req.user!.id);
+    const playlist = await playlistService.getById(req.params.id);
     if (!playlist) { notFound(res); return; }
     ok(res, { playlist });
   } catch (err) { next(err); }
@@ -50,9 +49,10 @@ export const join = async (req: AuthRequest, res: Response, next: NextFunction):
   } catch (err) { next(err); }
 };
 
+
 export const updateRole = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { role } = req.body as { role: string };
+    const { role } = req.body as { role: MemberRole };
     await playlistService.updateMemberRole(req.params.id, req.params.userId, role);
     ok(res, {}, 'Role updated');
   } catch (err) { next(err); }

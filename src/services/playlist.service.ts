@@ -1,5 +1,5 @@
 import supabase from '../config/supabase';
-import { Playlist, PlaylistMember, PlaylistRole } from '../types';
+import { MemberRole, Playlist, PlaylistMember } from '../types';
 
 interface CreatePlaylistInput {
   name: string;
@@ -104,7 +104,7 @@ export const joinByCode = async (inviteCode: string, userId: string): Promise<Pl
   return playlist as Playlist;
 };
 
-export const updateMemberRole = async (playlistId: string, targetUserId: string, role: PlaylistRole): Promise<void> => {
+export const updateMemberRole = async (playlistId: string, targetUserId: string, role: MemberRole): Promise<void> => {
   const { error } = await supabase
     .from('playlist_members')
     .update({ role })

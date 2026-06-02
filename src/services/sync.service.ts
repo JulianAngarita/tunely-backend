@@ -1,7 +1,7 @@
 import supabase from '../config/supabase';
 import * as spotifyService from './spotify.service';
 import * as youtubeService from './youtube.service';
-import { rankCandidates, AUTO_MATCH_THRESHOLD } from './matching.service';
+import { rankCandidates } from './matching.service';
 import logger from '../utils/logger';
 import {
   Song,

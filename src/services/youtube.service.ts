@@ -1,8 +1,8 @@
 import axios from 'axios';
 import supabase from '../config/supabase';
-import env from '../config/env';
+import {env} from '../config/env';
 import { encrypt, decrypt } from '../utils/crypto';
-import { TrackCandidate } from '../types';
+import { SongCandidate } from '../types';
 import logger from '../utils/logger';
 
 interface GoogleTokenResponse {
@@ -46,7 +46,7 @@ interface YouTubeSearchItem {
   snippet: { title: string; channelTitle: string; thumbnails: { medium: { url: string } } };
 }
 
-export const searchVideos = async (userId: string, query: string, limit = 5): Promise<TrackCandidate[]> => {
+export const searchVideos = async (userId: string, query: string, limit = 5): Promise<SongCandidate[]> => {
   const token = await getValidToken(userId);
   const res = await axios.get<{ items: YouTubeSearchItem[] }>(
     'https://www.googleapis.com/youtube/v3/search',
