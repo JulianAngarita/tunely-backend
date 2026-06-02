@@ -145,6 +145,9 @@ export const getSpotifyAuthUrl = (state?: string): string => {
 
 export const handleSpotifyCallback = async (code: string) => {
   console.log('REDIRECT_URI usado:', env.spotify.redirectUri);
+  console.log('CLIENT_ID:', env.spotify.clientId);
+  console.log('CLIENT_SECRET length:', env.spotify.clientSecret?.length);
+  console.log('REDIRECT_URI:', env.spotify.redirectUri);
   const basicAuth = Buffer.from(
     `${env.spotify.clientId}:${env.spotify.clientSecret}`
   ).toString('base64');
