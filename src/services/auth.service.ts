@@ -147,63 +147,77 @@ export const handleSpotifyCallback = async (code: string) => {
   console.log('REDIRECT_URI usado:', env.spotify.redirectUri);
   console.log('CLIENT_ID:', env.spotify.clientId);
   console.log('CLIENT_SECRET length:', env.spotify.clientSecret?.length);
-  console.log('REDIRECT_URI:', env.spotify.redirectUri);
+
   const basicAuth = Buffer.from(
     `${env.spotify.clientId}:${env.spotify.clientSecret}`
   ).toString('base64');
 
-  // 1. Intercambiar code por tokens
-  const tokenRes = await axios.post<{
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
-  }>(
-    'https://accounts.spotify.com/api/token',
-    new URLSearchParams({
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: env.spotify.redirectUri,
-    }),
-    { headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${basicAuth}` } }
-  );
+  try {
+    // 1. Intercambiar code por tokens
+    const tokenRes = await axios.post<{
+      access_token: string;
+      refresh_token: string;
+      expires_in: number;
+    }>(
+      'https://accounts.spotify.com/api/token',
+      new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: env.spotify.redirectUri,
+      }),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization:  `Basic ${basicAuth}`,
+        },
+      }
+    );
 
-  const { access_token, refresh_token, expires_in } = tokenRes.data;
+    const { access_token, refresh_token, expires_in } = tokenRes.data;
 
-  // 2. Obtener perfil de Spotify
-  const profileRes = await axios.get<{
-    id: string;
-    display_name: string;
-    email: string;
-    images: { url: string }[];
-  }>(
-    'https://api.spotify.com/v1/me',
-    { headers: { Authorization: `Bearer ${access_token}` } }
-  );
+    // 2. Obtener perfil de Spotify
+    const profileRes = await axios.get<{
+      id: string;
+      display_name: string;
+      email: string;
+      images: { url: string }[];
+    }>(
+      'https://api.spotify.com/v1/me',
+      { headers: { Authorization: `Bearer ${access_token}` } }
+    );
 
-  const { id: spotifyId, display_name, email, images } = profileRes.data;
-  const avatarUrl = images?.[0]?.url;
+    const { id: spotifyId, display_name, email, images } = profileRes.data;
+    const avatarUrl = images?.[0]?.url;
 
-  // 3. Crear o recuperar usuario en nuestra BD
-  const user = await findOrCreateUser({
-    email,
-    name: display_name ?? email,
-    avatarUrl,
-  });
+    // 3. Crear o recuperar usuario en nuestra BD
+    const user = await findOrCreateUser({
+      email,
+      name:      display_name ?? email,
+      avatarUrl,
+    });
 
-  // 4. Guardar cuenta conectada
-  await upsertConnectedAccount({
-    userId:         user.id,
-    provider:       'spotify',
-    providerUserId: spotifyId,
-    accessToken:    access_token,
-    refreshToken:   refresh_token,
-    expiresIn:      expires_in,
-  });
+    // 4. Guardar cuenta conectada
+    await upsertConnectedAccount({
+      userId:         user.id,
+      provider:       'spotify',
+      providerUserId: spotifyId,
+      accessToken:    access_token,
+      refreshToken:   refresh_token,
+      expiresIn:      expires_in,
+    });
 
-  // 5. Generar tokens JWT de Tunely
-  const tokens = generateTokens(user.id, user.email);
+    // 5. Generar tokens JWT de Tunely
+    const tokens = generateTokens(user.id, user.email);
 
-  return { user, tokens };
+    return { user, tokens };
+
+  } catch (err) {
+    if (axios.isAxiosError(err)) {
+      console.log('Spotify error status:', err.response?.status);
+      console.log('Spotify error data:', JSON.stringify(err.response?.data));
+    }
+    throw err;
+  }
 };
 
 // ─── GOOGLE / YOUTUBE ──────────────────────────────────────────
