@@ -7,20 +7,29 @@ interface CreatePlaylistInput {
   isPublic?: boolean;
   coverUrl?: string;
   ownerId: string;
+  coverGradientIndex?: number;  // ← nuevo
 }
 
 export const create = async (input: CreatePlaylistInput): Promise<Playlist> => {
   const { data: playlist, error } = await supabase
     .from('playlists')
-    .insert({ name: input.name, description: input.description, is_public: input.isPublic ?? false,
-              cover_url: input.coverUrl, owner_id: input.ownerId })
+    .insert({
+      name: input.name,
+      description: input.description,
+      is_public: input.isPublic ?? false,
+      cover_url: input.coverUrl,
+      owner_id: input.ownerId,
+      cover_gradient_index: input.coverGradientIndex ?? 0,
+    })
     .select()
     .single();
 
   if (error || !playlist) throw error ?? new Error('Failed to create playlist');
 
   await supabase.from('playlist_members').insert({
-    playlist_id: playlist.id, user_id: input.ownerId, role: 'owner',
+    playlist_id: playlist.id,
+    user_id: input.ownerId,
+    role: 'owner',
   });
 
   return playlist as Playlist;

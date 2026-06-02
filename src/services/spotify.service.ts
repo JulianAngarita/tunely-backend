@@ -57,14 +57,14 @@ export const searchTracks = async (userId: string, query: string, limit = 5): Pr
     { params: { q: query, type: 'track', limit }, headers: { Authorization: `Bearer ${token}` } }
   );
   return res.data.tracks.items.map((t) => ({
-    id:          t.id,
-    title:       t.name,
-    artist:      t.artists.map((a) => a.name).join(', '),
-    album:       t.album.name,
-    duration_ms: t.duration_ms,
-    popularity:  t.popularity,
-    cover_url:   t.album.images[0]?.url,
-    platform:    'spotify' as const,
+    id: t.id,
+    title: t.name,
+    artist: t.artists.map((a) => a.name).join(', '),
+    album: t.album.name,
+    duration_ms:t.duration_ms,
+    popularity: t.popularity,
+    cover_url: t.album.images[0]?.url,
+    platform: 'spotify' as const,
   }));
 };
 

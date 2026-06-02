@@ -192,18 +192,18 @@ export const handleSpotifyCallback = async (code: string) => {
     // 3. Crear o recuperar usuario en nuestra BD
     const user = await findOrCreateUser({
       email,
-      name:      display_name ?? email,
+      name: display_name ?? email,
       avatarUrl,
     });
 
     // 4. Guardar cuenta conectada
     await upsertConnectedAccount({
-      userId:         user.id,
-      provider:       'spotify',
+      userId: user.id,
+      provider: 'spotify',
       providerUserId: spotifyId,
-      accessToken:    access_token,
-      refreshToken:   refresh_token,
-      expiresIn:      expires_in,
+      accessToken: access_token,
+      refreshToken: refresh_token,
+      expiresIn: expires_in,
     });
 
     // 5. Generar tokens JWT de Tunely
