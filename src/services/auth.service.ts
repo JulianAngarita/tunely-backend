@@ -144,6 +144,7 @@ export const getSpotifyAuthUrl = (state?: string): string => {
 };
 
 export const handleSpotifyCallback = async (code: string) => {
+  console.log('REDIRECT_URI usado:', env.spotify.redirectUri);
   const basicAuth = Buffer.from(
     `${env.spotify.clientId}:${env.spotify.clientSecret}`
   ).toString('base64');
@@ -156,7 +157,7 @@ export const handleSpotifyCallback = async (code: string) => {
   }>(
     'https://accounts.spotify.com/api/token',
     new URLSearchParams({
-      grant_type:   'authorization_code',
+      grant_type: 'authorization_code',
       code,
       redirect_uri: env.spotify.redirectUri,
     }),

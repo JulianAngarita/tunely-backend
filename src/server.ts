@@ -27,7 +27,10 @@ app.use(rateLimit({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'));
-
+app.use(cors({
+  origin: '*', // temporal para debug
+  credentials: true,
+}));
 app.use('/api', routes);
 
 app.use(notFoundHandler);
