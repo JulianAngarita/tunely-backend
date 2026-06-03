@@ -11,6 +11,7 @@ interface GoogleTokenResponse {
 }
 
 export const getValidToken = async (userId: string): Promise<string> => {
+  
   const { data: account } = await supabase
     .from('connected_accounts')
     .select('access_token, refresh_token, expires_at')
@@ -19,6 +20,9 @@ export const getValidToken = async (userId: string): Promise<string> => {
     .single();
 
   if (!account) throw Object.assign(new Error('YouTube account not connected'), { status: 400 });
+
+   logger.info(`YouTube token expires_at: ${account.expires_at as string}`);
+  logger.info(`YouTube token is expired: ${new Date(account.expires_at as string) <= new Date(Date.now() + 60_000)}`);
 
   const isExpired = new Date(account.expires_at) <= new Date(Date.now() + 60_000);
   if (!isExpired) return decrypt(account.access_token as string);
@@ -75,6 +79,7 @@ export const addVideoToPlaylist = async (userId: string, youtubePlaylistId: stri
 
 export const createPlaylist = async (userId: string, name: string, description = '') => {
   const token = await getValidToken(userId);
+  logger.info(`YouTube createPlaylist - token preview: ${token.substring(0, 30)}...`);
   try {
     const res = await axios.post(
       'https://www.googleapis.com/youtube/v3/playlists?part=snippet,status',
