@@ -181,6 +181,8 @@ export const handleSpotifyCallback = async (code: string) => {
     { headers: { Authorization: `Bearer ${access_token}` } }
   );
 
+  console.log('profile res:', profileRes.data)
+
   const { id: spotifyId, display_name, email, images } = profileRes.data;
 
   // 3. Crear o recuperar usuario
