@@ -40,10 +40,8 @@ export const addSongToPlaylist = async ({
 
   let song;
   if (existingSong) {
-    // Ya existe — usar el registro existente
     song = existingSong;
   } else {
-    // No existe — insertar nuevo
     const { data, error } = await supabase
       .from('songs')
       .insert({
@@ -95,9 +93,9 @@ export const addSongToPlaylist = async ({
   const suggestions: { platform: string; results: any[] }[] = [];
 
   if (spotifyPlaylistId && !spotifyResolved) {
-    const cleanTitle  = _cleanYoutubeTitle(song.title as string);
+    const cleanTitle = _cleanYoutubeTitle(song.title as string);
     const cleanArtist = _cleanYoutubeArtist(song.artist as string);
-    const results     = process.env.NODE_ENV === 'production'
+    const results = process.env.NODE_ENV === 'production'
       ? await spotifyService.searchTracksPublic(`${cleanTitle} ${cleanArtist}`)
       : await spotifyService.searchTracks(userId, `${cleanTitle} ${cleanArtist}`);
     suggestions.push({ platform: 'spotify', results: results.slice(0, 3) });

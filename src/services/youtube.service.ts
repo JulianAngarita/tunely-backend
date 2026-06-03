@@ -73,14 +73,21 @@ export const addVideoToPlaylist = async (userId: string, youtubePlaylistId: stri
   );
 };
 
-export const createPlaylist = async (userId: string, name: string, description = ''): Promise<string> => {
+export const createPlaylist = async (userId: string, name: string, description = '') => {
   const token = await getValidToken(userId);
-  const res = await axios.post<{ id: string }>(
-    'https://www.googleapis.com/youtube/v3/playlists?part=snippet,status',
-    { snippet: { title: name, description }, status: { privacyStatus: 'private' } },
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  return res.data.id;
+  try {
+    const res = await axios.post(
+      'https://www.googleapis.com/youtube/v3/playlists?part=snippet,status',
+      { snippet: { title: name, description }, status: { privacyStatus: 'private' } },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return res.data.id;
+  } catch (err) {
+    if (axios.isAxiosError(err)) {
+      logger.error(`YouTube createPlaylist error: ${JSON.stringify(err.response?.data)}`);
+    }
+    throw err;
+  }
 };
 
 // Búsqueda pública con API Key — no requiere usuario autenticado
