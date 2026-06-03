@@ -88,9 +88,10 @@ export const searchTracks = async (userId: string, query: string, limit = 5): Pr
 
 export const addTrackToPlaylist = async (userId: string, spotifyPlaylistId: string, spotifyTrackId: string) => {
   const token = await getValidToken(userId);
+  console.log('token: ', token)
   try {
     await axios.post(
-      `https://api.spotify.com/v1/playlists/${spotifyPlaylistId}/tracks`,
+      `https://api.spotify.com/v1/playlists/${spotifyPlaylistId}/items`,
       { uris: [`spotify:track:${spotifyTrackId}`] },
       { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
