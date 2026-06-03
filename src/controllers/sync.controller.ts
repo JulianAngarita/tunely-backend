@@ -7,8 +7,8 @@ export const addSong = async (req: AuthRequest, res: Response, next: NextFunctio
   try {
     const result = await syncService.addSongToPlaylist({
       playlistId: req.params.playlistId,
-      songData:   req.body as Partial<Song>,
-      userId:     req.user!.id,
+      songData: req.body as Partial<Song>,
+      userId: req.user!.id,
     });
     ok(res, result, 'Song added');
   } catch (err) { next(err); }

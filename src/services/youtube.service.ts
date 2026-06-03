@@ -82,3 +82,23 @@ export const createPlaylist = async (userId: string, name: string, description =
   );
   return res.data.id;
 };
+
+// Búsqueda pública con API Key — no requiere usuario autenticado
+export const searchVideosPublic = async (query: string, limit = 5) => {
+  const res = await axios.get('https://www.googleapis.com/youtube/v3/search', {
+    params: {
+      part: 'snippet',
+      q: query,
+      type: 'video',
+      videoCategoryId: '10', // Music
+      maxResults: limit,
+      key: env.google.apiKey,
+    },
+  });
+  return res.data.items.map((item: any) => ({
+    id:        item.id.videoId,
+    title:     item.snippet.title,
+    artist:    item.snippet.channelTitle,
+    cover_url: item.snippet.thumbnails?.medium?.url,
+  }));
+};

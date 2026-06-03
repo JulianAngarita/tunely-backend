@@ -158,7 +158,11 @@ export const enqueueSync = async (
 export const processQueue = async (): Promise<void> => {
   const { data: items } = await supabase
     .from('sync_queue')
-    .select('*, songs(*), playlists(owner_id)')
+    .select(`
+      *,
+      songs(*),
+      playlists(owner_id, spotify_playlist_id, youtube_playlist_id)
+    `)
     .eq('status', 'pending')
     .lte('retry_count', 3)
     .limit(20);
@@ -172,12 +176,31 @@ export const processQueue = async (): Promise<void> => {
       .eq('id', item.id);
 
     try {
-      if (item.platform === 'spotify' && item.songs?.spotify_track_id) {
-        // TODO: obtener o crear playlist espejo en Spotify y agregar track
-        logger.info(`[Sync] Spotify ← song ${item.song_id}`);
-      } else if (item.platform === 'youtube' && item.songs?.youtube_video_id) {
-        // TODO: obtener o crear playlist espejo en YouTube y agregar video
-        logger.info(`[Sync] YouTube ← song ${item.song_id}`);
+      const ownerId          = item.playlists?.owner_id         as string;
+      const spotifyPlaylistId = item.playlists?.spotify_playlist_id as string | null;
+      const youtubePlaylistId = item.playlists?.youtube_playlist_id as string | null;
+
+      if (item.platform === 'spotify') {
+        if (!spotifyPlaylistId) {
+          throw new Error('No Spotify playlist ID — playlist was not created on Spotify');
+        }
+        const spotifyTrackId = item.songs?.spotify_track_id as string | null;
+        if (!spotifyTrackId) {
+          throw new Error('No Spotify track ID for this song');
+        }
+        await spotifyService.addTrackToPlaylist(ownerId, spotifyPlaylistId, spotifyTrackId);
+        logger.info(`[Sync] ✓ Spotify ← "${item.songs?.title}" added to playlist`);
+
+      } else if (item.platform === 'youtube') {
+        if (!youtubePlaylistId) {
+          throw new Error('No YouTube playlist ID — playlist was not created on YouTube');
+        }
+        const youtubeVideoId = item.songs?.youtube_video_id as string | null;
+        if (!youtubeVideoId) {
+          throw new Error('No YouTube video ID for this song');
+        }
+        await youtubeService.addVideoToPlaylist(ownerId, youtubePlaylistId, youtubeVideoId);
+        logger.info(`[Sync] ✓ YouTube ← "${item.songs?.title}" added to playlist`);
       }
 
       await supabase
@@ -197,8 +220,7 @@ export const processQueue = async (): Promise<void> => {
       }).eq('id', item.id);
 
       if (isFinal) {
-        logger.error(`[Sync] Permanently failed item ${item.id}: ${(err as Error).message}`);
-        // Registrar conflicto
+        logger.error(`[Sync] ✗ Permanently failed item ${item.id}: ${(err as Error).message}`);
         await supabase.from('song_conflicts').insert({
           song_id:       item.song_id,
           playlist_id:   item.playlist_id,

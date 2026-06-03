@@ -12,11 +12,11 @@ import { AuthRequest } from '../types';
 export const search = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { q } = req.query as { q: string };
-    if (!q) { ok(res, { results: [] }); return; }
+    if (!q) { ok(res, { spotify: [], youtube: [] }); return; }
 
     const [spotifyResults, youtubeResults] = await Promise.allSettled([
-      spotifyService.searchTracks(req.user!.id, q),
-      youtubeService.searchVideos(req.user!.id, q),
+      spotifyService.searchTracksPublic(q),
+      youtubeService.searchVideosPublic(q),
     ]);
 
     ok(res, {

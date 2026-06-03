@@ -89,3 +89,41 @@ export const createPlaylist = async (userId: string, name: string, description =
   );
   return res.data.id;
 };
+
+
+// Token de app — no requiere usuario autenticado
+export const getAppToken = async (): Promise<string> => {
+  const basicAuth = Buffer.from(
+    `${env.spotify.clientId}:${env.spotify.clientSecret}`
+  ).toString('base64');
+
+  const res = await axios.post<{ access_token: string }>(
+    'https://accounts.spotify.com/api/token',
+    new URLSearchParams({ grant_type: 'client_credentials' }),
+    {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization:  `Basic ${basicAuth}`,
+      },
+    }
+  );
+  return res.data.access_token;
+};
+
+// Búsqueda sin usuario — usa token de app
+export const searchTracksPublic = async (query: string, limit = 5) => {
+  const token = await getAppToken();
+  const res   = await axios.get('https://api.spotify.com/v1/search', {
+    params:  { q: query, type: 'track', limit },
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return res.data.tracks.items.map((t: any) => ({
+    id: t.id,
+    title: t.name,
+    artist: t.artists.map((a: any) => a.name).join(', '),
+    album: t.album.name,
+    duration_ms: t.duration_ms,
+    popularity: t.popularity,
+    cover_url: t.album.images[0]?.url,
+  }));
+};

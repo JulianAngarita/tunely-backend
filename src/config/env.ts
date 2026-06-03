@@ -10,6 +10,7 @@ const required = [
   'GOOGLE_CLIENT_ID',
   'GOOGLE_CLIENT_SECRET',
   'ENCRYPTION_KEY',
+  'YOUTUBE_API_KEY'
 ] as const;
 
 for (const key of required) {
@@ -55,6 +56,7 @@ export const env = {
       'https://www.googleapis.com/auth/userinfo.email',
       'https://www.googleapis.com/auth/userinfo.profile',
     ].join(' '),
+    apiKey: process.env.YOUTUBE_API_KEY!
   },
 
   encryption: {

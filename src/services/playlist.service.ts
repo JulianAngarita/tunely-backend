@@ -1,6 +1,7 @@
 import supabase from '../config/supabase';
 import { MemberRole, Playlist, PlaylistMember } from '../types';
-
+import * as youtubeService from './youtube.service';
+import * as spotifyService from './spotify.service';
 interface CreatePlaylistInput {
   name: string;
   description?: string;
@@ -11,26 +12,62 @@ interface CreatePlaylistInput {
 }
 
 export const create = async (input: CreatePlaylistInput): Promise<Playlist> => {
+  // Crear en BD
   const { data: playlist, error } = await supabase
-    .from('playlists')
-    .insert({
-      name: input.name,
-      description: input.description,
-      is_public: input.isPublic ?? false,
-      cover_url: input.coverUrl,
-      owner_id: input.ownerId,
-      cover_gradient_index: input.coverGradientIndex ?? 0,
-    })
-    .select()
-    .single();
+  .from('playlists')
+  .insert({
+    name: input.name,
+    description: input.description,
+    is_public: input.isPublic ?? false,
+    cover_url: input.coverUrl,
+    owner_id: input.ownerId,
+    cover_gradient_index: input.coverGradientIndex ?? 0,
+  }).select().single();
 
   if (error || !playlist) throw error ?? new Error('Failed to create playlist');
 
   await supabase.from('playlist_members').insert({
-    playlist_id: playlist.id,
-    user_id: input.ownerId,
-    role: 'owner',
+    playlist_id: playlist.id, user_id: input.ownerId, role: 'owner',
   });
+
+  // Verificar cuentas conectadas
+  const { data: accounts } = await supabase
+    .from('connected_accounts')
+    .select('provider')
+    .eq('user_id', input.ownerId);
+
+  const providers = accounts?.map((a) => a.provider) ?? [];
+
+  // Crear en Spotify si está conectado
+  if (providers.includes('spotify')) {
+    try {
+      const spotifyPlaylistId = await spotifyService.createPlaylist(
+        input.ownerId, input.name, input.description ?? '',
+      );
+      await supabase
+        .from('playlists')
+        .update({ spotify_playlist_id: spotifyPlaylistId })
+        .eq('id', playlist.id);
+    } catch (err) {
+      console.warn(`Could not create Spotify playlist: ${(err as Error).message}`);
+      // No falla — la playlist en BD ya fue creada
+    }
+  }
+
+  // Crear en YouTube si está conectado
+  if (providers.includes('google')) {
+    try {
+      const youtubePlaylistId = await youtubeService.createPlaylist(
+        input.ownerId, input.name, input.description ?? '',
+      );
+      await supabase
+        .from('playlists')
+        .update({ youtube_playlist_id: youtubePlaylistId })
+        .eq('id', playlist.id);
+    } catch (err) {
+      console.warn(`Could not create YouTube playlist: ${(err as Error).message}`);
+    }
+  }
 
   return playlist as Playlist;
 };
