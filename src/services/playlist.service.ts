@@ -80,7 +80,8 @@ export const getById = async (playlistId: string): Promise<Playlist | null> => {
       playlist_members(user_id, role, users(id, name, avatar_url)),
       playlist_songs(
         position, added_at,
-        songs(id, title, artist, album, duration_ms, availability_status),
+        songs(id, title, artist, album, duration_ms, availability_status,
+              spotify_track_id, youtube_video_id, cover_url),
         users!added_by(id, name, avatar_url)
       )
     `)
