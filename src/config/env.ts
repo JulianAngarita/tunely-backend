@@ -48,18 +48,16 @@ export const env = {
   },
 
   google: {
-    clientId: process.env.GOOGLE_CLIENT_ID!,
+    clientId:     process.env.GOOGLE_CLIENT_ID!,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    redirectUri: process.env.GOOGLE_REDIRECT_URI ?? 'http://localhost:3000/api/auth/google/callback',
-    google: {
-      scopes: [
-        'https://www.googleapis.com/auth/youtube',           // ← gestión completa
-        'https://www.googleapis.com/auth/youtube.force-ssl', // ← necesario para write
-        'https://www.googleapis.com/auth/userinfo.email',
-        'https://www.googleapis.com/auth/userinfo.profile',
-      ].join(' '),
-    },
-    apiKey: process.env.YOUTUBE_API_KEY!
+    redirectUri:  process.env.GOOGLE_REDIRECT_URI ?? 'http://localhost:3000/api/auth/google/callback',
+    scopes: [
+      'https://www.googleapis.com/auth/youtube',
+      'https://www.googleapis.com/auth/youtube.force-ssl',
+      'https://www.googleapis.com/auth/userinfo.email',
+      'https://www.googleapis.com/auth/userinfo.profile',
+    ].join(' '),
+    apiKey: process.env.YOUTUBE_API_KEY!,
   },
 
   encryption: {
