@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import axios from 'axios';
 import supabase from '../config/supabase';
 import { env } from '../config/env';
-import { encrypt, createAppError } from '../utils/crypto';
+import { encrypt, createAppError, decrypt } from '../utils/crypto';
 import {
   RegisterPayload,
   LoginPayload,
@@ -144,80 +144,92 @@ export const getSpotifyAuthUrl = (state?: string): string => {
 };
 
 export const handleSpotifyCallback = async (code: string) => {
-  console.log('REDIRECT_URI usado:', env.spotify.redirectUri);
-  console.log('CLIENT_ID:', env.spotify.clientId);
-  console.log('CLIENT_SECRET length:', env.spotify.clientSecret?.length);
-
   const basicAuth = Buffer.from(
     `${env.spotify.clientId}:${env.spotify.clientSecret}`
   ).toString('base64');
 
-  try {
-    // 1. Intercambiar code por tokens
-    const tokenRes = await axios.post<{
-      access_token: string;
-      refresh_token: string;
-      expires_in: number;
-    }>(
-      'https://accounts.spotify.com/api/token',
-      new URLSearchParams({
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: env.spotify.redirectUri,
-      }),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Authorization:  `Basic ${basicAuth}`,
-        },
-      }
-    );
-
-    const { access_token, refresh_token, expires_in } = tokenRes.data;
-
-    // 2. Obtener perfil de Spotify
-    const profileRes = await axios.get<{
-      id: string;
-      display_name: string;
-      email: string;
-      images: { url: string }[];
-    }>(
-      'https://api.spotify.com/v1/me',
-      { headers: { Authorization: `Bearer ${access_token}` } }
-    );
-
-    const { id: spotifyId, display_name, email, images } = profileRes.data;
-    const avatarUrl = images?.[0]?.url;
-
-    // 3. Crear o recuperar usuario en nuestra BD
-    const user = await findOrCreateUser({
-      email,
-      name: display_name ?? email,
-      avatarUrl,
-    });
-
-    // 4. Guardar cuenta conectada
-    await upsertConnectedAccount({
-      userId: user.id,
-      provider: 'spotify',
-      providerUserId: spotifyId,
-      accessToken: access_token,
-      refreshToken: refresh_token,
-      expiresIn: expires_in,
-    });
-
-    // 5. Generar tokens JWT de Tunely
-    const tokens = generateTokens(user.id, user.email);
-
-    return { user, tokens };
-
-  } catch (err) {
-    if (axios.isAxiosError(err)) {
-      console.log('Spotify error status:', err.response?.status);
-      console.log('Spotify error data:', JSON.stringify(err.response?.data));
+  // 1. Intercambiar code por tokens
+  const tokenRes = await axios.post<{
+    access_token:  string;
+    refresh_token?: string;
+    expires_in:    number;
+  }>(
+    'https://accounts.spotify.com/api/token',
+    new URLSearchParams({
+      grant_type:   'authorization_code',
+      code,
+      redirect_uri: env.spotify.redirectUri,
+    }),
+    {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization:  `Basic ${basicAuth}`,
+      },
     }
-    throw err;
+  );
+
+  const { access_token, refresh_token, expires_in } = tokenRes.data;
+
+  // 2. Obtener perfil de Spotify
+  const profileRes = await axios.get<{
+    id:           string;
+    display_name: string;
+    email:        string;
+    images:       { url: string }[];
+  }>(
+    'https://api.spotify.com/v1/me',
+    { headers: { Authorization: `Bearer ${access_token}` } }
+  );
+
+  const { id: spotifyId, display_name, email, images } = profileRes.data;
+
+  // 3. Crear o recuperar usuario
+  const user = await findOrCreateUser({
+    email,
+    name:      display_name ?? email,
+    avatarUrl: images?.[0]?.url,
+  });
+
+  // 4. Resolver refresh_token
+  let resolvedRefreshToken = refresh_token;
+
+  if (!resolvedRefreshToken) {
+    const { data: existing } = await supabase
+      .from('connected_accounts')
+      .select('refresh_token')
+      .eq('user_id', user.id)
+      .eq('provider', 'spotify')
+      .single();
+
+    if (existing?.refresh_token) {
+      resolvedRefreshToken = decrypt(existing.refresh_token as string);
+      console.debug('Spotify callback: reusing existing refresh_token');
+    } else {
+      console.warn('Spotify callback: no refresh_token received and none stored');
+    }
   }
+
+  if (!resolvedRefreshToken) {
+    throw createAppError(
+      'Spotify did not provide a refresh token. Please disconnect and reconnect your account.',
+      400
+    );
+  }
+
+  // 5. Guardar cuenta conectada
+  await upsertConnectedAccount({
+    userId:         user.id,
+    provider:       'spotify',
+    providerUserId: spotifyId,
+    accessToken:    access_token,
+    refreshToken:   resolvedRefreshToken,
+    expiresIn:      expires_in,
+  });
+
+  // 6. Generar tokens JWT de Tunely
+  const tokens = generateTokens(user.id, user.email);
+
+  return { user, tokens };
 };
 
 // ─── GOOGLE / YOUTUBE ──────────────────────────────────────────

@@ -85,24 +85,47 @@ export const addSongToPlaylist = async ({
   const spotifyPlaylistId = playlist?.spotify_playlist_id as string | null;
   const youtubePlaylistId = playlist?.youtube_playlist_id as string | null;
 
-  // 5. Resolver IDs de plataformas faltantes via matching
-  await Promise.all([
-    spotifyPlaylistId ? _resolveSpotifyId(song, userId) : Promise.resolve(),
-    youtubePlaylistId ? _resolveYoutubeId(song) : Promise.resolve(),
+  // 5. Resolver IDs
+  const [spotifyResolved, youtubeResolved] = await Promise.all([
+    spotifyPlaylistId ? _resolveSpotifyId(song, userId) : Promise.resolve(null),
+    youtubePlaylistId ? _resolveYoutubeId(song)         : Promise.resolve(null),
   ]);
 
-  // 6. Encolar sync para plataformas que tienen match
+  // 6. Buscar sugerencias para plataformas sin match
+  const suggestions: { platform: string; results: any[] }[] = [];
+
+  if (spotifyPlaylistId && !spotifyResolved) {
+    const cleanTitle  = _cleanYoutubeTitle(song.title as string);
+    const cleanArtist = _cleanYoutubeArtist(song.artist as string);
+    const results     = process.env.NODE_ENV === 'production'
+      ? await spotifyService.searchTracksPublic(`${cleanTitle} ${cleanArtist}`)
+      : await spotifyService.searchTracks(userId, `${cleanTitle} ${cleanArtist}`);
+    suggestions.push({ platform: 'spotify', results: results.slice(0, 3) });
+  }
+
+  if (youtubePlaylistId && !youtubeResolved) {
+    const results = await youtubeService.searchVideosPublic(
+      `${song.title as string} ${song.artist as string}`
+    );
+    suggestions.push({ platform: 'youtube', results: results.slice(0, 3) });
+  }
+
+  // 7. Encolar sync para plataformas con match
   const platformsToSync: SyncPlatform[] = [
-    ...(spotifyPlaylistId && song.spotify_track_id ? ['spotify'] as const : []),
-    ...(youtubePlaylistId && song.youtube_video_id ? ['youtube'] as const : []),
+    ...(spotifyPlaylistId && spotifyResolved ? ['spotify'] as const : []),
+    ...(youtubePlaylistId && youtubeResolved ? ['youtube'] as const : []),
   ];
 
   if (platformsToSync.length > 0) {
     await enqueueSync(song.id, playlistId, platformsToSync);
-    return { song, matchStatus: 'auto' };
   }
 
-  return { song, matchStatus: 'pending_confirmation' };
+  // 8. Devolver resultado con sugerencias si las hay
+  return {
+    song,
+    matchStatus:  suggestions.length > 0 ? 'pending_confirmation' : 'auto',
+    suggestions,
+  };
 };
 
 // ─── HELPERS ───────────────────────────────────────────────────
@@ -128,28 +151,21 @@ const _cleanYoutubeArtist = (artist: string): string => {
     .trim();
 };
 
-const _resolveSpotifyId = async (song: any, userId: string): Promise<void> => {
-  if (song.spotify_track_id) return;
+const _resolveSpotifyId = async (song: any, userId: string): Promise<string | null> => {
+  if (song.spotify_track_id) return song.spotify_track_id as string;
 
   logger.info(`[Sync] Finding Spotify match for "${song.title as string}"...`);
   try {
-    const cleanTitle = _cleanYoutubeTitle(song.title as string);
+    const cleanTitle  = _cleanYoutubeTitle(song.title as string);
     const cleanArtist = _cleanYoutubeArtist(song.artist as string);
-    const query = `${cleanTitle} ${cleanArtist}`.trim();
-
-    logger.info(`[Sync] Cleaned query: "${query}"`);
+    const query       = `${cleanTitle} ${cleanArtist}`.trim();
 
     const results = process.env.NODE_ENV === 'production'
       ? await spotifyService.searchTracksPublic(query)
       : await spotifyService.searchTracks(userId, query);
 
-    // Usar título y artista limpios para el score
     const match = rankCandidates(
-      {
-        ...song,
-        title: cleanTitle,
-        artist: cleanArtist,
-      } as Song,
+      { ...song, title: cleanTitle, artist: cleanArtist } as Song,
       results.map((r: any) => ({ ...r, platform: 'spotify' as SyncPlatform }))
     );
 
@@ -158,16 +174,21 @@ const _resolveSpotifyId = async (song: any, userId: string): Promise<void> => {
       await supabase.from('songs').update({ spotify_track_id: match.best.id }).eq('id', song.id);
       song.spotify_track_id = match.best.id;
       logger.info(`[Sync] ✓ Spotify match: "${match.best.title}"`);
-    } else {
-      logger.warn(`[Sync] No confident Spotify match for "${song.title as string}"`);
+      return match.best.id;
     }
+
+    // No hay match automático — devolver sugerencias
+    logger.warn(`[Sync] No confident Spotify match, returning suggestions`);
+    return null;
+
   } catch (err) {
     logger.warn(`[Sync] Spotify search failed: ${(err as Error).message}`);
+    return null;
   }
 };
 
-const _resolveYoutubeId = async (song: any): Promise<void> => {
-  if (song.youtube_video_id) return; // ya tiene ID, nada que resolver
+const _resolveYoutubeId = async (song: any): Promise<string | null> => {
+  if (song.youtube_video_id) return song.youtube_video_id as string;
 
   logger.info(`[Sync] Finding YouTube match for "${song.title as string}"...`);
   try {
@@ -184,11 +205,15 @@ const _resolveYoutubeId = async (song: any): Promise<void> => {
       await supabase.from('songs').update({ youtube_video_id: match.best.id }).eq('id', song.id);
       song.youtube_video_id = match.best.id;
       logger.info(`[Sync] ✓ YouTube match: "${match.best.title}"`);
-    } else {
-      logger.warn(`[Sync] No confident YouTube match for "${song.title as string}"`);
+      return match.best.id;
     }
+
+    logger.warn(`[Sync] No confident YouTube match, returning suggestions`);
+    return null;
+
   } catch (err) {
     logger.warn(`[Sync] YouTube search failed: ${(err as Error).message}`);
+    return null;
   }
 };
 
