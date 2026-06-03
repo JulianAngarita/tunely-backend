@@ -15,8 +15,8 @@ export const search = async (req: AuthRequest, res: Response, next: NextFunction
     if (!q) { ok(res, { spotify: [], youtube: [] }); return; }
 
     const [spotifyResults, youtubeResults] = await Promise.allSettled([
-      spotifyService.searchTracksPublic(q),
-      youtubeService.searchVideosPublic(q),
+      spotifyService.searchTracks(req.user!.id, q),  // ← token del usuario
+      youtubeService.searchVideosPublic(q),            // ← API Key pública
     ]);
 
     ok(res, {

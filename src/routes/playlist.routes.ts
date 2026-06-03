@@ -30,8 +30,8 @@ const loadMembership = async (
 };
 
 // ── Playlist CRUD ─────────────────────────────────────────────
-router.get('/',      ctrl.getMyPlaylists);
-router.post('/',     ctrl.create);
+router.get('/', ctrl.getMyPlaylists);
+router.post('/', ctrl.create);
 router.post('/join', ctrl.join);
 
 router.get   ('/:id', loadMembership, ctrl.getOne);

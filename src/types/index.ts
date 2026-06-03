@@ -69,6 +69,7 @@ export interface Song {
   youtube_video_id?: string;
   availability_status: AvailabilityStatus;
   created_at: string;
+  cover_url: string;
 }
 
 export interface PlaylistSong {

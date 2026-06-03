@@ -2,6 +2,7 @@ import supabase from '../config/supabase';
 import { MemberRole, Playlist, PlaylistMember } from '../types';
 import * as youtubeService from './youtube.service';
 import * as spotifyService from './spotify.service';
+import axios from 'axios';
 interface CreatePlaylistInput {
   name: string;
   description?: string;
@@ -49,8 +50,10 @@ export const create = async (input: CreatePlaylistInput): Promise<Playlist> => {
         .update({ spotify_playlist_id: spotifyPlaylistId })
         .eq('id', playlist.id);
     } catch (err) {
+      if (axios.isAxiosError(err)) {
+        console.error(`Spotify 403 detail: ${JSON.stringify(err.response?.data)}`);
+      }
       console.warn(`Could not create Spotify playlist: ${(err as Error).message}`);
-      // No falla — la playlist en BD ya fue creada
     }
   }
 
@@ -111,6 +114,43 @@ export const update = async (playlistId: string, fields: Partial<Playlist>): Pro
 };
 
 export const remove = async (playlistId: string): Promise<void> => {
+  // 1. Obtener datos de la playlist antes de eliminar
+  const { data: playlist } = await supabase
+    .from('playlists')
+    .select('owner_id, spotify_playlist_id, youtube_playlist_id')
+    .eq('id', playlistId)
+    .single();
+
+  // 2. Eliminar de Spotify si existe playlist espejo
+  if (playlist?.spotify_playlist_id) {
+    try {
+      const token = await spotifyService.getValidToken(playlist.owner_id);
+      await axios.delete(
+        `https://api.spotify.com/v1/playlists/${playlist.spotify_playlist_id}/followers`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+    } catch (err) {
+      console.warn(`Could not delete Spotify playlist: ${(err as Error).message}`);
+    }
+  }
+
+  // 3. Eliminar de YouTube si existe playlist espejo
+  if (playlist?.youtube_playlist_id) {
+    try {
+      const token = await youtubeService.getValidToken(playlist.owner_id);
+      await axios.delete(
+        'https://www.googleapis.com/youtube/v3/playlists',
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          params:  { id: playlist.youtube_playlist_id },
+        }
+      );
+    } catch (err) {
+      console.warn(`Could not delete YouTube playlist: ${(err as Error).message}`);
+    }
+  }
+
+  // 4. Eliminar de BD (cascade elimina members, songs, queue, etc.)
   const { error } = await supabase.from('playlists').delete().eq('id', playlistId);
   if (error) throw error;
 };

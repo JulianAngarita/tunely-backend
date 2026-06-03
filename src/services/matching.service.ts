@@ -1,7 +1,7 @@
 import { SongCandidate, MatchResult, Song } from '../types';
 
 const WEIGHTS = { title: 0.40, artist: 0.30, album: 0.10, duration: 0.10, popularity: 0.10 } as const;
-export const AUTO_MATCH_THRESHOLD = 70;
+export const AUTO_MATCH_THRESHOLD = 55;
 
 const stringSimilarity = (a = '', b = ''): number => {
   if (!a || !b) return 0;

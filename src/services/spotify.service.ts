@@ -47,6 +47,24 @@ export const getValidToken = async (userId: string): Promise<string> => {
     .eq('user_id', userId)
     .eq('provider', 'spotify');
 
+
+     // Verificar scopes del token
+  try {
+    const meRes = await axios.get('https://api.spotify.com/v1/me', {
+      headers: { Authorization: `Bearer ${access_token}` },
+    });
+    logger.info(`Spotify user: ${meRes.data.id as string}`);
+    
+    // Verificar si puede modificar playlists
+    const testRes = await axios.get(
+      `https://api.spotify.com/v1/me/playlists`,
+      { headers: { Authorization: `Bearer ${access_token}` } }
+    );
+    logger.info(`Can read playlists: true, count: ${testRes.data.total as number}`);
+  } catch (err) {
+    logger.error(`Token validation failed: ${(err as Error).message}`);
+  }
+  
   return access_token;
 };
 
@@ -68,28 +86,30 @@ export const searchTracks = async (userId: string, query: string, limit = 5): Pr
   }));
 };
 
-export const addTrackToPlaylist = async (userId: string, spotifyPlaylistId: string, trackId: string): Promise<void> => {
+export const addTrackToPlaylist = async (userId: string, spotifyPlaylistId: string, spotifyTrackId: string) => {
   const token = await getValidToken(userId);
-  await axios.post(
-    `https://api.spotify.com/v1/playlists/${spotifyPlaylistId}/tracks`,
-    { uris: [`spotify:track:${trackId}`] },
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
+  try {
+    await axios.post(
+      `https://api.spotify.com/v1/playlists/${spotifyPlaylistId}/tracks`,
+      { uris: [`spotify:track:${spotifyTrackId}`] },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+  } catch (err) {
+    if (axios.isAxiosError(err)) {
+      logger.error(`Spotify addTrack error: ${JSON.stringify(err.response?.data)}`);
+    }
+    throw err;
+  }
 };
-
-export const createPlaylist = async (userId: string, name: string, description = ''): Promise<string> => {
+export const createPlaylist = async (userId: string, name: string, description = '') => {
   const token = await getValidToken(userId);
-  const meRes = await axios.get<{ id: string }>('https://api.spotify.com/v1/me', {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const res = await axios.post<{ id: string }>(
-    `https://api.spotify.com/v1/users/${meRes.data.id}/playlists`,
+  const res = await axios.post(
+    `https://api.spotify.com/v1/me/playlists`, 
     { name, description, public: false },
-    { headers: { Authorization: `Bearer ${token}` } }
+    { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
   );
   return res.data.id;
 };
-
 
 // Token de app — no requiere usuario autenticado
 export const getAppToken = async (): Promise<string> => {
