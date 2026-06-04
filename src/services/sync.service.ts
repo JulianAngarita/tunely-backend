@@ -2,6 +2,7 @@ import supabase from '../config/supabase';
 import * as spotifyService from './spotify.service';
 import * as youtubeService from './youtube.service';
 import { rankCandidates } from './matching.service';
+import { getMemberPlatformPlaylists } from './platform_playlist.service';
 import logger from '../utils/logger';
 import {
   Song,
@@ -19,8 +20,8 @@ export const addSongToPlaylist = async ({
   userId,
 }: AddSongPayload) => {
 
-  // 1. Upsert song en BD
-  let existingSong = null;
+  // 1. Buscar canción existente o insertar nueva
+  let song: any = null;
 
   if (songData.spotify_track_id) {
     const { data } = await supabase
@@ -28,30 +29,27 @@ export const addSongToPlaylist = async ({
       .select()
       .eq('spotify_track_id', songData.spotify_track_id)
       .single();
-    existingSong = data;
+    song = data;
   } else if (songData.youtube_video_id) {
     const { data } = await supabase
       .from('songs')
       .select()
       .eq('youtube_video_id', songData.youtube_video_id)
       .single();
-    existingSong = data;
+    song = data;
   }
 
-  let song;
-  if (existingSong) {
-    song = existingSong;
-  } else {
+  if (!song) {
     const { data, error } = await supabase
       .from('songs')
       .insert({
-        title: songData.title,
-        artist: songData.artist,
-        album: songData.album ?? null,
-        duration_ms: songData.duration_ms ?? null,
+        title:            songData.title,
+        artist:           songData.artist,
+        album:            songData.album            ?? null,
+        duration_ms:      songData.duration_ms      ?? null,
         spotify_track_id: songData.spotify_track_id ?? null,
         youtube_video_id: songData.youtube_video_id ?? null,
-        cover_url: songData.cover_url ?? null,
+        cover_url:        songData.cover_url        ?? null,
       })
       .select()
       .single();
@@ -62,68 +60,83 @@ export const addSongToPlaylist = async ({
   // 2. Agregar a playlist_songs
   const { error: psError } = await supabase
     .from('playlist_songs')
-    .upsert({ playlist_id: playlistId, song_id: song.id, added_by: userId });
+    .upsert(
+      { playlist_id: playlistId, song_id: song.id, added_by: userId },
+      { onConflict: 'playlist_id,song_id', ignoreDuplicates: true }
+    );
   if (psError) throw psError;
 
   // 3. Log activity
   await supabase.from('activity_log').insert({
     playlist_id: playlistId,
-    user_id: userId,
-    action: 'song_added',
-    details: { song_id: song.id, title: song.title, artist: song.artist },
+    user_id:     userId,
+    action:      'song_added',
+    details:     { song_id: song.id, title: song.title, artist: song.artist },
   });
 
-  // 4. Obtener IDs de playlists espejo
-  const { data: playlist } = await supabase
-    .from('playlists')
-    .select('spotify_playlist_id, youtube_playlist_id')
-    .eq('id', playlistId)
-    .single();
-
-  const spotifyPlaylistId = playlist?.spotify_playlist_id as string | null;
-  const youtubePlaylistId = playlist?.youtube_playlist_id as string | null;
-
-  // 5. Resolver IDs
-  const [spotifyResolved, youtubeResolved] = await Promise.all([
-    spotifyPlaylistId ? _resolveSpotifyId(song, userId) : Promise.resolve(null),
-    youtubePlaylistId ? _resolveYoutubeId(song)         : Promise.resolve(null),
+  // 4. Resolver IDs de ambas plataformas
+  await Promise.all([
+    _resolveSpotifyId(song, userId),
+    _resolveYoutubeId(song),
   ]);
 
-  // 6. Buscar sugerencias para plataformas sin match
-  const suggestions: { platform: string; results: any[] }[] = [];
+  // 5. Encolar sync para TODOS los miembros con playlists espejo
+  await _enqueueSyncForAllMembers(song, playlistId);
 
-  if (spotifyPlaylistId && !spotifyResolved) {
-    const cleanTitle = _cleanYoutubeTitle(song.title as string);
-    const cleanArtist = _cleanYoutubeArtist(song.artist as string);
-    const results = process.env.NODE_ENV === 'production'
-      ? await spotifyService.searchTracksPublic(`${cleanTitle} ${cleanArtist}`)
-      : await spotifyService.searchTracks(userId, `${cleanTitle} ${cleanArtist}`);
-    suggestions.push({ platform: 'spotify', results: results.slice(0, 3) });
+  return { song, matchStatus: 'auto', suggestions: [] };
+};
+
+// ─── SYNC PARA TODOS LOS MIEMBROS ──────────────────────────────
+
+const _enqueueSyncForAllMembers = async (
+  song: any,
+  playlistId: string
+): Promise<void> => {
+  const mirrors = await getMemberPlatformPlaylists(playlistId);
+
+  if (!mirrors.length) {
+    logger.warn(`[Sync] No platform mirrors found for playlist ${playlistId}`);
+    return;
   }
 
-  if (youtubePlaylistId && !youtubeResolved) {
-    const results = await youtubeService.searchVideosPublic(
-      `${song.title as string} ${song.artist as string}`
-    );
-    suggestions.push({ platform: 'youtube', results: results.slice(0, 3) });
+  for (const mirror of mirrors) {
+    const platform = mirror.provider === 'spotify' ? 'spotify' : 'youtube';
+    const hasId    = platform === 'spotify'
+      ? !!song.spotify_track_id
+      : !!song.youtube_video_id;
+
+    if (!hasId) {
+      logger.warn(`[Sync] No ${platform} ID for song "${song.title as string}" — skipping member ${mirror.userId}`);
+      continue;
+    }
+
+    // Verificar si ya existe en la queue para este usuario+playlist+plataforma
+    const { data: existing } = await supabase
+      .from('sync_queue')
+      .select('id')
+      .eq('song_id',     song.id)
+      .eq('playlist_id', playlistId)
+      .eq('platform',    platform)
+      .eq('user_id',     mirror.userId)
+      .in('status',      ['pending', 'processing'])
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      logger.debug(`[Queue] Skipping duplicate: ${platform} song=${song.id as string} user=${mirror.userId}`);
+      continue;
+    }
+
+    await supabase.from('sync_queue').insert({
+      song_id:              song.id,
+      playlist_id:          playlistId,
+      platform,
+      user_id:              mirror.userId,
+      platform_playlist_id: mirror.platformPlaylistId,
+      status:               'pending',
+    });
+
+    logger.info(`[Queue] Enqueued ${platform} sync for user ${mirror.userId}`);
   }
-
-  // 7. Encolar sync para plataformas con match
-  const platformsToSync: SyncPlatform[] = [
-    ...(spotifyPlaylistId && spotifyResolved ? ['spotify'] as const : []),
-    ...(youtubePlaylistId && youtubeResolved ? ['youtube'] as const : []),
-  ];
-
-  if (platformsToSync.length > 0) {
-    await enqueueSync(song.id, playlistId, platformsToSync);
-  }
-
-  // 8. Devolver resultado con sugerencias si las hay
-  return {
-    song,
-    matchStatus:  suggestions.length > 0 ? 'pending_confirmation' : 'auto',
-    suggestions,
-  };
 };
 
 // ─── HELPERS ───────────────────────────────────────────────────
@@ -131,7 +144,6 @@ export const addSongToPlaylist = async ({
 const _cleanYoutubeTitle = (title: string): string => {
   return title
     .replace(/^[^-]+-\s*/, '')
-    // Quitar sufijos comunes de videos de YouTube
     .replace(/\(official\s*(music\s*)?(video|audio|lyric.*|visualizer)\)/gi, '')
     .replace(/\[official\s*(music\s*)?(video|audio|lyric.*|visualizer)\]/gi, '')
     .replace(/\(.*?(lyrics?|lyric video|hd|4k|remaster.*|video oficial)\)/gi, '')
@@ -143,9 +155,9 @@ const _cleanYoutubeTitle = (title: string): string => {
 
 const _cleanYoutubeArtist = (artist: string): string => {
   return artist
-    .replace(/\s*-\s*Topic$/i, '')  // quitar " - Topic" de canales de YouTube
-    .replace(/VEVO$/i, '')           // quitar "VEVO" 
-    .replace(/Official$/i, '')       // quitar "Official"
+    .replace(/\s*-\s*Topic$/i, '')
+    .replace(/VEVO$/i, '')
+    .replace(/Official$/i, '')
     .trim();
 };
 
@@ -167,18 +179,16 @@ const _resolveSpotifyId = async (song: any, userId: string): Promise<string | nu
       results.map((r: any) => ({ ...r, platform: 'spotify' as SyncPlatform }))
     );
 
-    if (match.autoMatch && match.best) {
+    if (match.best) {
       await saveMapping(song as Song, match.best, false);
       await supabase.from('songs').update({ spotify_track_id: match.best.id }).eq('id', song.id);
       song.spotify_track_id = match.best.id;
-      logger.info(`[Sync] ✓ Spotify match: "${match.best.title}"`);
+      logger.info(`[Sync] ✓ Spotify match (score=${match.best.score}): "${match.best.title}"`);
       return match.best.id;
     }
 
-    // No hay match automático — devolver sugerencias
-    logger.warn(`[Sync] No confident Spotify match, returning suggestions`);
+    logger.warn(`[Sync] No Spotify results for "${song.title as string}"`);
     return null;
-
   } catch (err) {
     logger.warn(`[Sync] Spotify search failed: ${(err as Error).message}`);
     return null;
@@ -190,25 +200,26 @@ const _resolveYoutubeId = async (song: any): Promise<string | null> => {
 
   logger.info(`[Sync] Finding YouTube match for "${song.title as string}"...`);
   try {
-    const results = await youtubeService.searchVideosPublic(
-      `${song.title as string} ${song.artist as string}`
-    );
-    const match = rankCandidates(
-      song as Song,
+    const cleanTitle  = _cleanYoutubeTitle(song.title as string);
+    const cleanArtist = _cleanYoutubeArtist(song.artist as string);
+    const query       = `${cleanTitle} ${cleanArtist}`.trim();
+
+    const results = await youtubeService.searchVideosPublic(query);
+    const match   = rankCandidates(
+      { ...song, title: cleanTitle, artist: cleanArtist } as Song,
       results.map((r: any) => ({ ...r, platform: 'youtube' as SyncPlatform }))
     );
 
-    if (match.autoMatch && match.best) {
+    if (match.best) {
       await saveMapping(song as Song, match.best, false);
       await supabase.from('songs').update({ youtube_video_id: match.best.id }).eq('id', song.id);
       song.youtube_video_id = match.best.id;
-      logger.info(`[Sync] ✓ YouTube match: "${match.best.title}"`);
+      logger.info(`[Sync] ✓ YouTube match (score=${match.best.score}): "${match.best.title}"`);
       return match.best.id;
     }
 
-    logger.warn(`[Sync] No confident YouTube match, returning suggestions`);
+    logger.warn(`[Sync] No YouTube results for "${song.title as string}"`);
     return null;
-
   } catch (err) {
     logger.warn(`[Sync] YouTube search failed: ${(err as Error).message}`);
     return null;
@@ -221,16 +232,16 @@ export const findMatch = async (
   song: Song,
   userId: string
 ): Promise<MatchResult> => {
-  const query = `${song.title} ${song.artist}`;
+  const query      = `${song.title} ${song.artist}`;
   let candidates: SongCandidate[] = [];
 
   try {
     if (song.spotify_track_id) {
       const results = await youtubeService.searchVideos(userId, query);
-      candidates = results.map((r) => ({ ...r, platform: 'youtube' as SyncPlatform }));
+      candidates    = results.map((r) => ({ ...r, platform: 'youtube' as SyncPlatform }));
     } else if (song.youtube_video_id) {
       const results = await spotifyService.searchTracks(userId, query);
-      candidates = results.map((r) => ({ ...r, platform: 'spotify' as SyncPlatform }));
+      candidates    = results.map((r) => ({ ...r, platform: 'spotify' as SyncPlatform }));
     }
   } catch (err) {
     logger.warn(`Match search failed for song ${song.id}: ${(err as Error).message}`);
@@ -248,54 +259,69 @@ export const saveMapping = async (
 ): Promise<void> => {
   const mappingData: Record<string, unknown> = {
     confirmed_by_user: confirmedByUser,
-    match_score: match.score ?? 0,
+    match_score:       match.score ?? 0,
   };
 
   if (match.platform === 'youtube') {
     mappingData.spotify_track_id = song.spotify_track_id;
     mappingData.youtube_video_id = match.id;
-    await supabase
-      .from('songs')
-      .update({ youtube_video_id: match.id })
-      .eq('id', song.id);
+    await supabase.from('songs').update({ youtube_video_id: match.id }).eq('id', song.id);
   } else {
     mappingData.youtube_video_id = song.youtube_video_id;
     mappingData.spotify_track_id = match.id;
-    await supabase
-      .from('songs')
-      .update({ spotify_track_id: match.id })
-      .eq('id', song.id);
+    await supabase.from('songs').update({ spotify_track_id: match.id }).eq('id', song.id);
   }
 
   await supabase.from('song_mappings').upsert(mappingData);
 };
 
-// ─── ENQUEUE SYNC ──────────────────────────────────────────────
+// ─── ENQUEUE SYNC (legacy — kept for confirmMatch) ─────────────
 
 export const enqueueSync = async (
   songId: string,
   playlistId: string,
   platforms: SyncPlatform[]
 ): Promise<void> => {
-  const rows = platforms.map((platform) => ({
-    song_id: songId,
-    playlist_id: playlistId,
-    platform,
-    status: 'pending',
-  }));
-  await supabase.from('sync_queue').insert(rows);
+  // Obtener mirrors y encolar para cada miembro
+  const mirrors = await getMemberPlatformPlaylists(playlistId);
+
+  for (const platform of platforms) {
+    const relevantMirrors = mirrors.filter((m) =>
+      (platform === 'spotify' && m.provider === 'spotify') ||
+      (platform === 'youtube' && m.provider === 'google')
+    );
+
+    for (const mirror of relevantMirrors) {
+      const { data: existing } = await supabase
+        .from('sync_queue')
+        .select('id')
+        .eq('song_id',     songId)
+        .eq('playlist_id', playlistId)
+        .eq('platform',    platform)
+        .eq('user_id',     mirror.userId)
+        .in('status',      ['pending', 'processing'])
+        .limit(1);
+
+      if (existing && existing.length > 0) continue;
+
+      await supabase.from('sync_queue').insert({
+        song_id:              songId,
+        playlist_id:          playlistId,
+        platform,
+        user_id:              mirror.userId,
+        platform_playlist_id: mirror.platformPlaylistId,
+        status:               'pending',
+      });
+    }
+  }
 };
 
-// ─── PROCESS QUEUE (called by scheduler) ──────────────────────
+// ─── PROCESS QUEUE ─────────────────────────────────────────────
 
 export const processQueue = async (): Promise<void> => {
   const { data: items } = await supabase
     .from('sync_queue')
-    .select(`
-      *,
-      songs(*),
-      playlists(owner_id, spotify_playlist_id, youtube_playlist_id)
-    `)
+    .select('*, songs(*)')
     .eq('status', 'pending')
     .lte('retry_count', 3)
     .limit(20);
@@ -308,38 +334,33 @@ export const processQueue = async (): Promise<void> => {
   logger.info(`[Queue] Processing ${items.length} items`);
 
   for (const item of items) {
-    logger.info(`[Queue] Item: platform=${item.platform as string}, song="${item.songs?.title as string}", spotifyTrackId=${item.songs?.spotify_track_id as string}, spotifyPlaylistId=${item.playlists?.spotify_playlist_id as string}`);
-    await supabase
-      .from('sync_queue')
-      .update({ status: 'processing' })
-      .eq('id', item.id);
+    // Ahora usamos user_id y platform_playlist_id directamente del item
+    const userId             = item.user_id              as string;
+    const platformPlaylistId = item.platform_playlist_id as string;
+
+    logger.info(
+      `[Queue] platform=${item.platform as string}, ` +
+      `song="${item.songs?.title as string}", ` +
+      `user=${userId}, ` +
+      `platformPlaylistId=${platformPlaylistId}`
+    );
+
+    await supabase.from('sync_queue').update({ status: 'processing' }).eq('id', item.id);
 
     try {
-      const ownerId = item.playlists?.owner_id as string;
-      const spotifyPlaylistId = item.playlists?.spotify_playlist_id as string | null;
-      const youtubePlaylistId = item.playlists?.youtube_playlist_id as string | null;
-
       if (item.platform === 'spotify') {
-        if (!spotifyPlaylistId) {
-          throw new Error('No Spotify playlist ID — playlist was not created on Spotify');
-        }
         const spotifyTrackId = item.songs?.spotify_track_id as string | null;
-        if (!spotifyTrackId) {
-          throw new Error('No Spotify track ID for this song');
-        }
-        await spotifyService.addTrackToPlaylist(ownerId, spotifyPlaylistId, spotifyTrackId);
-        logger.info(`[Sync] ✓ Spotify ← "${item.songs?.title}" added to playlist`);
+        if (!spotifyTrackId)    throw new Error('No Spotify track ID');
+        if (!platformPlaylistId) throw new Error('No Spotify playlist ID');
+        await spotifyService.addTrackToPlaylist(userId, platformPlaylistId, spotifyTrackId);
+        logger.info(`[Sync] ✓ Spotify ← "${item.songs?.title as string}" for user ${userId}`);
 
       } else if (item.platform === 'youtube') {
-        if (!youtubePlaylistId) {
-          throw new Error('No YouTube playlist ID — playlist was not created on YouTube');
-        }
         const youtubeVideoId = item.songs?.youtube_video_id as string | null;
-        if (!youtubeVideoId) {
-          throw new Error('No YouTube video ID for this song');
-        }
-        await youtubeService.addVideoToPlaylist(ownerId, youtubePlaylistId, youtubeVideoId);
-        logger.info(`[Sync] ✓ YouTube ← "${item.songs?.title}" added to playlist`);
+        if (!youtubeVideoId)     throw new Error('No YouTube video ID');
+        if (!platformPlaylistId) throw new Error('No YouTube playlist ID');
+        await youtubeService.addVideoToPlaylist(userId, platformPlaylistId, youtubeVideoId);
+        logger.info(`[Sync] ✓ YouTube ← "${item.songs?.title as string}" for user ${userId}`);
       }
 
       await supabase
@@ -349,21 +370,21 @@ export const processQueue = async (): Promise<void> => {
 
     } catch (err) {
       const newRetry = (item.retry_count as number) + 1;
-      const isFinal = newRetry >= 3;
+      const isFinal  = newRetry >= 3;
 
       await supabase.from('sync_queue').update({
-        status: isFinal ? 'failed' : 'pending',
-        retry_count: newRetry,
+        status:        isFinal ? 'failed' : 'pending',
+        retry_count:   newRetry,
         error_message: (err as Error).message,
-        updated_at: new Date().toISOString(),
+        updated_at:    new Date().toISOString(),
       }).eq('id', item.id);
 
       if (isFinal) {
-        logger.error(`[Sync] ✗ Permanently failed item ${item.id}: ${(err as Error).message}`);
+        logger.error(`[Sync] ✗ Failed ${item.id as string}: ${(err as Error).message}`);
         await supabase.from('song_conflicts').insert({
-          song_id: item.song_id,
-          playlist_id: item.playlist_id,
-          platform: item.platform,
+          song_id:       item.song_id,
+          playlist_id:   item.playlist_id,
+          platform:      item.platform,
           conflict_type: 'not_available',
         });
       }

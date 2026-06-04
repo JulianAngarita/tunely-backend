@@ -9,9 +9,9 @@ import { AuthRequest } from '../types';
 const router = Router();
 router.use(authenticate);
 
-router.get('/me',           ctrl.getMe);
-router.get('/me/accounts',  ctrl.getMyAccounts);
-router.get('/me/activity',  ctrl.getActivity);
+router.get('/me', ctrl.getMe);
+router.get('/me/accounts', ctrl.getMyAccounts);
+router.get('/me/activity', ctrl.getActivity);
 
 router.delete('/me', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -23,6 +23,26 @@ router.delete('/me', async (req: AuthRequest, res: Response, next: NextFunction)
     await supabase.from('users').delete().eq('id', userId);
 
     ok(res, {}, 'Account deleted');
+  } catch (err) { next(err); }
+});
+
+router.patch('/me/preferred-platform', authenticate, async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { platform } = req.body as { platform: 'spotify' | 'youtube' };
+
+    if (!['spotify', 'youtube'].includes(platform)) {
+      res.status(400).json({ success: false, message: 'Invalid platform' });
+      return;
+    }
+
+    const { error } = await supabase
+      .from('users')
+      .update({ preferred_platform: platform })
+      .eq('id', req.user!.id);
+
+    if (error) throw error;
+
+    ok(res, { preferredPlatform: platform });
   } catch (err) { next(err); }
 });
 

@@ -3,6 +3,7 @@ import { MemberRole, Playlist, PlaylistMember } from '../types';
 import * as youtubeService from './youtube.service';
 import * as spotifyService from './spotify.service';
 import axios from 'axios';
+import { createMemberPlatformPlaylists } from './platform_playlist.service';
 interface CreatePlaylistInput {
   name: string;
   description?: string;
@@ -13,64 +14,36 @@ interface CreatePlaylistInput {
 }
 
 export const create = async (input: CreatePlaylistInput): Promise<Playlist> => {
-  // Crear en BD
+  // 1. Crear en BD
   const { data: playlist, error } = await supabase
-  .from('playlists')
-  .insert({
-    name: input.name,
-    description: input.description,
-    is_public: input.isPublic ?? false,
-    cover_url: input.coverUrl,
-    owner_id: input.ownerId,
-    cover_gradient_index: input.coverGradientIndex ?? 0,
-  }).select().single();
+    .from('playlists')
+    .insert({
+      name: input.name,
+      description: input.description,
+      is_public: input.isPublic ?? false,
+      cover_url: input.coverUrl,
+      owner_id: input.ownerId,
+      cover_gradient_index: input.coverGradientIndex ?? 0,
+    })
+    .select()
+    .single();
 
   if (error || !playlist) throw error ?? new Error('Failed to create playlist');
 
+  // 2. Agregar owner como miembro
   await supabase.from('playlist_members').insert({
-    playlist_id: playlist.id, user_id: input.ownerId, role: 'owner',
+    playlist_id: playlist.id,
+    user_id: input.ownerId,
+    role: 'owner',
   });
 
-  // Verificar cuentas conectadas
-  const { data: accounts } = await supabase
-    .from('connected_accounts')
-    .select('provider')
-    .eq('user_id', input.ownerId);
-
-  const providers = accounts?.map((a) => a.provider) ?? [];
-
-  // Crear en Spotify si está conectado
-  if (providers.includes('spotify')) {
-    try {
-      const spotifyPlaylistId = await spotifyService.createPlaylist(
-        input.ownerId, input.name, input.description ?? '',
-      );
-      await supabase
-        .from('playlists')
-        .update({ spotify_playlist_id: spotifyPlaylistId })
-        .eq('id', playlist.id);
-    } catch (err) {
-      if (axios.isAxiosError(err)) {
-        console.error(`Spotify 403 detail: ${JSON.stringify(err.response?.data)}`);
-      }
-      console.warn(`Could not create Spotify playlist: ${(err as Error).message}`);
-    }
-  }
-
-  // Crear en YouTube si está conectado
-  if (providers.includes('google')) {
-    try {
-      const youtubePlaylistId = await youtubeService.createPlaylist(
-        input.ownerId, input.name, input.description ?? '',
-      );
-      await supabase
-        .from('playlists')
-        .update({ youtube_playlist_id: youtubePlaylistId })
-        .eq('id', playlist.id);
-    } catch (err) {
-      console.warn(`Could not create YouTube playlist: ${(err as Error).message}`);
-    }
-  }
+  // 3. Crear playlists espejo en las plataformas del owner
+  await createMemberPlatformPlaylists(
+    playlist.id,
+    input.ownerId,
+    input.name,
+    input.description ?? '',
+  );
 
   return playlist as Playlist;
 };
@@ -142,7 +115,7 @@ export const remove = async (playlistId: string): Promise<void> => {
         'https://www.googleapis.com/youtube/v3/playlists',
         {
           headers: { Authorization: `Bearer ${token}` },
-          params:  { id: playlist.youtube_playlist_id },
+          params: { id: playlist.youtube_playlist_id },
         }
       );
     } catch (err) {
@@ -158,7 +131,15 @@ export const remove = async (playlistId: string): Promise<void> => {
 export const getUserPlaylists = async (userId: string) => {
   const { data, error } = await supabase
     .from('playlist_members')
-    .select('role, playlists(*)')
+    .select(`
+      role,
+      playlists(
+        id, name, owner_id, cover_url, is_public,
+        created_at, updated_at, description,
+        invite_code, cover_gradient_index,
+        playlist_songs(count)
+      )
+    `)
     .eq('user_id', userId);
   if (error) throw error;
   return data ?? [];
@@ -175,18 +156,36 @@ export const getMembership = async (playlistId: string, userId: string): Promise
 };
 
 export const joinByCode = async (inviteCode: string, userId: string): Promise<Playlist> => {
+  // 1. Buscar playlist por código
   const { data: playlist, error } = await supabase
     .from('playlists')
-    .select('id')
+    .select('id, name, description')
     .eq('invite_code', inviteCode)
     .single();
 
   if (error || !playlist) throw Object.assign(new Error('Invalid invite code'), { status: 404 });
 
+  // 2. Agregar como miembro
   await supabase.from('playlist_members').upsert(
     { playlist_id: playlist.id, user_id: userId, role: 'member' },
     { onConflict: 'playlist_id,user_id' }
   );
+
+  // 3. Crear playlists espejo en las plataformas del nuevo miembro
+  await createMemberPlatformPlaylists(
+    playlist.id,
+    userId,
+    playlist.name as string,
+    (playlist.description as string) ?? '',
+  );
+
+  // 4. Log activity
+  await supabase.from('activity_log').insert({
+    playlist_id: playlist.id,
+    user_id: userId,
+    action: 'member_joined',
+    details: { user_id: userId },
+  });
 
   return playlist as Playlist;
 };

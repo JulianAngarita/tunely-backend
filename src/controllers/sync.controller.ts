@@ -18,7 +18,11 @@ export const confirmMatch = async (req: AuthRequest, res: Response, next: NextFu
   try {
     const { song, match } = req.body as { song: Song; match: SongCandidate };
     await syncService.saveMapping(song, match, true);
-    await syncService.enqueueSync(song.id, req.params.playlistId, ['spotify', 'youtube']);
+
+    const platform = match.platform as 'spotify' | 'youtube';
+
+    await syncService.enqueueSync(song.id, req.params.playlistId, [platform]);
+
     ok(res, {}, 'Match confirmed, sync enqueued');
   } catch (err) { next(err); }
 };

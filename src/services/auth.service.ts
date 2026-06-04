@@ -14,13 +14,12 @@ import {
 
 // ─── JWT ───────────────────────────────────────────────────────
 
-export const generateTokens = (userId: string, email: string): AuthTokens => {
-  const payload: JwtPayload = { id: userId, email };
-  const accessToken  = jwt.sign(payload, env.jwt.secret, { expiresIn: env.jwt.expiresIn } as jwt.SignOptions);
+export const generateTokens = (userId: string, email: string, name: string): AuthTokens => {
+  const payload: JwtPayload = { id: userId, email, name };
+  const accessToken = jwt.sign(payload, env.jwt.secret, { expiresIn: env.jwt.expiresIn } as jwt.SignOptions);
   const refreshToken = jwt.sign(payload, env.jwt.secret, { expiresIn: env.jwt.refreshExpiresIn } as jwt.SignOptions);
   return { accessToken, refreshToken };
 };
-
 // ─── EMAIL/PASSWORD (opcional, para usuarios que prefieran) ────
 
 export const register = async ({ name, email, password }: RegisterPayload) => {
@@ -36,7 +35,7 @@ export const register = async ({ name, email, password }: RegisterPayload) => {
     .single();
 
   if (error) throw error;
-  return { user, tokens: generateTokens(user.id, user.email) };
+  return { user, tokens: generateTokens(user.id, user.email, user.name) };
 };
 
 export const login = async ({ email, password }: LoginPayload) => {
@@ -52,13 +51,13 @@ export const login = async ({ email, password }: LoginPayload) => {
   if (!valid) throw createAppError('Invalid credentials', 401);
 
   const { password_hash: _omit, ...safeUser } = user as User & { password_hash: string };
-  return { user: safeUser, tokens: generateTokens(user.id, user.email) };
+  return { user: safeUser, tokens: generateTokens(user.id, user.email, user.name as string) };
 };
 
 export const refreshAccessToken = (token: string): AuthTokens => {
   try {
     const payload = jwt.verify(token, env.jwt.secret) as JwtPayload;
-    return generateTokens(payload.id, payload.email);
+    return generateTokens(payload.id, payload.email, payload.name);
   } catch {
     throw createAppError('Invalid refresh token', 401);
   }
@@ -119,13 +118,13 @@ const upsertConnectedAccount = async ({
 }) => {
   const expires_at = new Date(Date.now() + expiresIn * 1000).toISOString();
   await supabase.from('connected_accounts').upsert({
-    user_id:          userId,
+    user_id: userId,
     provider,
     provider_user_id: providerUserId,
-    access_token:     encrypt(accessToken),
-    refresh_token:    encrypt(refreshToken),
+    access_token: encrypt(accessToken),
+    refresh_token: encrypt(refreshToken),
     expires_at,
-    updated_at:       new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   }, { onConflict: 'user_id,provider' });
 };
 
@@ -133,11 +132,11 @@ const upsertConnectedAccount = async ({
 
 export const getSpotifyAuthUrl = (state?: string): string => {
   const params = new URLSearchParams({
-    client_id:     env.spotify.clientId,
+    client_id: env.spotify.clientId,
     response_type: 'code',
-    redirect_uri:  env.spotify.redirectUri,
-    scope:         env.spotify.scopes,
-    show_dialog:   'true',
+    redirect_uri: env.spotify.redirectUri,
+    scope: env.spotify.scopes,
+    show_dialog: 'true',
     ...(state && { state }),
   });
   return `https://accounts.spotify.com/authorize?${params}`;
@@ -150,20 +149,20 @@ export const handleSpotifyCallback = async (code: string) => {
 
   // 1. Intercambiar code por tokens
   const tokenRes = await axios.post<{
-    access_token:  string;
+    access_token: string;
     refresh_token?: string;
-    expires_in:    number;
+    expires_in: number;
   }>(
     'https://accounts.spotify.com/api/token',
     new URLSearchParams({
-      grant_type:   'authorization_code',
+      grant_type: 'authorization_code',
       code,
       redirect_uri: env.spotify.redirectUri,
     }),
     {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        Authorization:  `Basic ${basicAuth}`,
+        Authorization: `Basic ${basicAuth}`,
       },
     }
   );
@@ -172,16 +171,14 @@ export const handleSpotifyCallback = async (code: string) => {
 
   // 2. Obtener perfil de Spotify
   const profileRes = await axios.get<{
-    id:           string;
+    id: string;
     display_name: string;
-    email:        string;
-    images:       { url: string }[];
+    email: string;
+    images: { url: string }[];
   }>(
     'https://api.spotify.com/v1/me',
     { headers: { Authorization: `Bearer ${access_token}` } }
   );
-
-  console.log('profile res:', profileRes.data.images?.[0]?.url)
 
   const { id: spotifyId, display_name, email, images } = profileRes.data;
 
@@ -220,16 +217,16 @@ export const handleSpotifyCallback = async (code: string) => {
 
   // 5. Guardar cuenta conectada
   await upsertConnectedAccount({
-    userId:         user.id,
-    provider:       'spotify',
+    userId: user.id,
+    provider: 'spotify',
     providerUserId: spotifyId,
-    accessToken:    access_token,
-    refreshToken:   resolvedRefreshToken,
-    expiresIn:      expires_in,
+    accessToken: access_token,
+    refreshToken: resolvedRefreshToken,
+    expiresIn: expires_in,
   });
 
   // 6. Generar tokens JWT de Tunely
-  const tokens = generateTokens(user.id, user.email);
+  const tokens = generateTokens(user.id, user.email, user.name);
 
   return { user, tokens };
 };
@@ -238,12 +235,12 @@ export const handleSpotifyCallback = async (code: string) => {
 
 export const getGoogleAuthUrl = (state?: string): string => {
   const params = new URLSearchParams({
-    client_id:     env.google.clientId,
-    redirect_uri:  env.google.redirectUri,
+    client_id: env.google.clientId,
+    redirect_uri: env.google.redirectUri,
     response_type: 'code',
-    scope:         env.google.scopes,
-    access_type:   'offline',
-    prompt:        'consent',
+    scope: env.google.scopes,
+    access_type: 'offline',
+    prompt: 'consent',
     ...(state && { state }),
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
@@ -257,10 +254,10 @@ export const handleGoogleCallback = async (code: string) => {
     expires_in: number;
   }>('https://oauth2.googleapis.com/token', {
     code,
-    client_id:     env.google.clientId,
+    client_id: env.google.clientId,
     client_secret: env.google.clientSecret,
-    redirect_uri:  env.google.redirectUri,
-    grant_type:    'authorization_code',
+    redirect_uri: env.google.redirectUri,
+    grant_type: 'authorization_code',
   });
 
   const { access_token, refresh_token, expires_in } = tokenRes.data;
@@ -283,16 +280,16 @@ export const handleGoogleCallback = async (code: string) => {
 
   // 4. Guardar cuenta conectada
   await upsertConnectedAccount({
-    userId:         user.id,
-    provider:       'google',
+    userId: user.id,
+    provider: 'google',
     providerUserId: googleId,
-    accessToken:    access_token,
-    refreshToken:   refresh_token,
-    expiresIn:      expires_in,
+    accessToken: access_token,
+    refreshToken: refresh_token,
+    expiresIn: expires_in,
   });
 
   // 5. Generar tokens JWT de Tunely
-  const tokens = generateTokens(user.id, user.email);
+  const tokens = generateTokens(user.id, user.email, user.name);
 
   return { user, tokens };
 };

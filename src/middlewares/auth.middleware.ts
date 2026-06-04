@@ -13,6 +13,7 @@ export const authenticate = (req: AuthRequest, res: Response, next: NextFunction
   const token = header.split(' ')[1];
   try {
     const payload = jwt.verify(token, env.jwt.secret) as JwtPayload;
+
     req.user = payload;
     next();
   } catch {
