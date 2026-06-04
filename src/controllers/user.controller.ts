@@ -73,16 +73,35 @@ export const getMyAccounts = async (req: AuthRequest, res: Response, next: NextF
 
 export const getActivity = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { data } = await supabase
+    const userId = req.user!.id;
+
+    // Obtener IDs de playlists donde el usuario es miembro
+    const { data: memberships } = await supabase
+      .from('playlist_members')
+      .select('playlist_id')
+      .eq('user_id', userId);
+
+    const playlistIds = (memberships ?? []).map((m) => m.playlist_id as string);
+
+    if (!playlistIds.length) {
+      ok(res, { activity: [] });
+      return;
+    }
+
+    // Obtener actividad de todas esas playlists
+    const { data, error } = await supabase
       .from('activity_log')
       .select(`
-        id, action, details, created_at,
-        users!user_id(id, name, avatar_url),
-        playlists!playlist_id(id, name)
+        id, action, details, created_at, user_id, playlist_id,
+        users(id, name, avatar_url),
+        playlists(id, name)
       `)
-      .eq('user_id', req.user!.id)
+      .in('playlist_id', playlistIds)
       .order('created_at', { ascending: false })
       .limit(50);
+
+    if (error) throw error;
+
     ok(res, { activity: data ?? [] });
   } catch (err) { next(err); }
 };
