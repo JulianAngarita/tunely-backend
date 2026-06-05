@@ -33,11 +33,11 @@ const durationSimilarity = (msA?: number, msB?: number): number => {
 
 export const scoreCandidate = (source: Pick<Song, 'title' | 'artist' | 'album' | 'duration_ms'>, candidate: SongCandidate): number => {
   const total =
-    stringSimilarity(source.title, candidate.title)       * WEIGHTS.title +
-    stringSimilarity(source.artist, candidate.artist)     * WEIGHTS.artist +
-    stringSimilarity(source.album, candidate.album)       * WEIGHTS.album +
+    stringSimilarity(source.title, candidate.title) * WEIGHTS.title +
+    stringSimilarity(source.artist, candidate.artist) * WEIGHTS.artist +
+    stringSimilarity(source.album, candidate.album) * WEIGHTS.album +
     durationSimilarity(source.duration_ms, candidate.duration_ms) * WEIGHTS.duration +
-    ((candidate.popularity ?? 0) / 100)                   * WEIGHTS.popularity;
+    ((candidate.popularity ?? 0) / 100) * WEIGHTS.popularity;
 
   return Math.round(total * 100);
 };
